@@ -7,14 +7,27 @@ A toolkit for using MongoDB with Clojure.
 
 Recent Changes
 --------------
+Added a few convenience fns related to object-ids:     
 
-Now available from clojars via leiningen.           
-Added skip and limit to fetch.
-Patched ClojureDBObject to call clojure.lang.RT so it    
-will create ArrayMaps/HashMaps as appropriate.    
+'object-id:   creates a com.mongodb.ObjectId from a string so      
+you don't have to import it anymore.      
+
+'fetch-by-id: takes a collection and a string/object-id and      
+fetches the result      
+
+'get-timestamp: takes a map with a valid :_id or an ObjectId and
+returns the embedded timestamp       
+       
+GridFs support courtesy of Steve Purcell.     
+
+Bumped version to 0.1.2.          
+
+Clojars group is now congomongo.                 
 
 Summary
 ---------
+note: The .java bits are likely to disappear once Clojure 1.2 is stable.
+
 CongoMongo is essentially two parts.
 
 One is the ClojureDBObject class written in java.
@@ -109,7 +122,7 @@ Install
 
 Leiningen is the recommended way to use congomongo.
 Just add 
-    [org.clojars.somnium/congomongo "0.1.1-SNAPSHOT"]
+    [congomongo "0.1.2-SNAPSHOT"]
 to your project.clj and do
     $lein deps
 to get congomongo and all of its dependencies.    

@@ -26,7 +26,8 @@
             [somnium.congomongo.util   :only [named defunk]]
             [somnium.congomongo.coerce :only [coerce coerce-fields]]
             [clojure.contrib.json read write])
-  (:import  [com.mongodb Mongo DB DBCollection DBObject]
+  (:import  [com.mongodb Mongo DB DBCollection DBObject ObjectId]
+            [com.mongodb.gridfs GridFS]
             [com.mongodb.util JSON]
             [somnium.congomongo ClojureDBObject]))
 
@@ -47,6 +48,19 @@
 
 ;; perhaps split *mongo-config* out into vars for thread-local
 ;; changes. 
+
+;; add some convenience fns for manipulating object-ids
+(definline object-id [s]
+  `(ObjectId. #^String ~s))
+
+;; add convenience get-timestamp method
+(defn get-timestamp
+  "pulls the timestamp from an ObjectId or a map with a valid
+   ObjectId in :_id."
+  [obj]
+  (let [id (if (instance? ObjectId obj) obj (:_id obj))]
+    (when id (.getTime id))))
+
 
 (definline get-coll
   "Returns a DBCollection object"
@@ -95,6 +109,11 @@
 
 (defn fetch-count [col & options]
   (apply fetch col (concat options '[:count? true])))
+
+;; add fetch-by-id fn
+(defn fetch-by-id [col id & options]
+  (let [id (if (instance? ObjectId id) id (object-id id))]
+      (apply fetch col (concat options [:one? true :where {:_id id}]))))
 
 (defunk insert! 
   "Inserts a map into collection. Will not overwrite existing maps.
@@ -172,16 +191,81 @@
     (swap! *mongo-config* merge {:db db})
     (throw (RuntimeException. (str "database with title " title " does not exist.")))))
 
+;;;; go ahead and have these retucn seqs
+
 (defn databases
   "List databases on the mongo server" []
-  (.getDatabaseNames (:mongo @*mongo-config*)))
+  (seq (.getDatabaseNames (:mongo @*mongo-config*))))
 
 (defn collections
   "Returns the set of collections stored in the current database" []
-  (.getCollectionNames #^DB (:db @*mongo-config*)))
+  (seq (.getCollectionNames #^DB (:db @*mongo-config*))))
 
 (defn drop-coll!
   [collection]
   "Permanently deletes a collection. Use with care."
   (.drop #^DBCollection (.getCollection #^DB (:db @*mongo-config*)
                                         #^String (named collection))))
+
+;;;; GridFS, contributed by Steve Purcell
+;;;; question: keep the camelCase keyword for :contentType ?
+ 
+(definline get-gridfs
+  "Returns a GridFS object for the named bucket"
+  [bucket]
+  `(GridFS. #^DB (:db @*mongo-config*) #^String (named ~bucket)))
+ 
+;; The naming of :contentType is ugly, but consistent with that
+;; returned by GridFSFile
+(defunk insert-file!
+  "Insert file data into a GridFS. Data should be either a File,
+   InputStream or byte array.
+   Options include:
+   :filename    -> defaults to nil
+   :contentType -> defaults to nil
+   :metadata    -> defaults to nil"
+  {:arglists '(fs data {:filename nil :contentType nil :metadata nil})}
+  [fs data :filename nil :contentType nil :metadata nil]
+  (let [f (.createFile (get-gridfs fs) data)]
+    (if filename (.setFilename f filename))
+    (if contentType (.setContentType f contentType))
+    (if metadata (.putAll (.getMetaData f) (coerce metadata [:clojure :mongo])))
+    (.save f)
+    (coerce f [:gridfs :clojure])))
+ 
+(defunk destroy-file!
+   "Removes file from gridfs. Takes a GridFS name and
+    a query map"
+   {:arglists '(fs where {:from :clojure})}
+   [fs q :from :clojure]
+   (.remove (get-gridfs fs)
+            #^DBObject (coerce q [from :mongo])))
+ 
+(defunk fetch-files
+  "Fetches objects from a GridFS
+   Note that MongoDB always adds the _id and _ns
+   fields to objects returned from the database.
+   Optional arguments include
+   :where  -> takes a query map
+   :from   -> argument type, same options as above
+   :one?   -> defaults to false, use fetch-one-file as a shortcut"
+  {:arglists
+   '([fs :where :from :one?])}
+  [fs :where {} :from :clojure :one? false]
+  (let [n-where (coerce where [from :mongo])
+        n-fs   (get-gridfs fs)]
+    (if one?
+      (if-let [m (.findOne #^GridFS n-fs #^DBObject n-where)]
+        (coerce m [:gridfs :clojure]) nil)
+      (if-let [m (.find #^GridFS n-fs #^DBObject n-where)]
+        (coerce m [:gridfs :clojure] :many true) nil))))
+ 
+(defn fetch-one-file [fs & options]
+  (apply fetch-files fs (concat options '[:one? true])))
+ 
+(defn write-file-to
+  "Writes the data stored for a file to the supplied output, which
+   should be either an OutputStream, File, or the String path for a file."
+  [fs file out]
+  (if-let [f (.findOne (get-gridfs fs) (coerce file [:clojure :mongo]))]
+    (.writeTo f out)))
