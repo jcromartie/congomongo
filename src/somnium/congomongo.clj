@@ -65,9 +65,11 @@
 (definline get-coll
   "Returns a DBCollection object"
   [collection]
-  `(doto (.getCollection #^DB (:db @*mongo-config*)
-                         #^String (named ~collection))
-     (.setObjectClass ClojureDBObject)))
+  `(if-let [db# (:db @*mongo-config*)]
+     (doto (.getCollection #^DB db#
+			   #^String (named ~collection))
+       (.setObjectClass ClojureDBObject))
+     (throw (RuntimeException. "Congomongo is not configured, use mongo! to set up a connection"))))
 
 (defunk fetch 
   "Fetches objects from a collection.
